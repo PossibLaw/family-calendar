@@ -65,7 +65,7 @@ def calendars_from_source(path: Path, allowed_hosts: set[str]) -> list[str]:
         urls = discover_park_district_urls(text)
         if not urls:
             raise RuntimeError(
-                f"PDF has no trusted Park District calendar feed and requires review: {path}"
+                f"PDF has no trusted Park District calendar feed and requires conversion: {path}"
             )
         return [fetch_ical(url, allowed_hosts) for url in urls]
     raise RuntimeError(f"Unsupported schedule source type: {path}")

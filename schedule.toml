@@ -1,7 +1,13 @@
 [calendar]
 id = "primary"
 name = "Family Calendar"
+timezone = "America/Chicago"
 reminder_minutes = 30
+
+[intake]
+address = ""
+trusted_senders = []
+allow_any_sender = false
 
 [providers]
 allowed_ical_hosts = ["anprod.active.com"]

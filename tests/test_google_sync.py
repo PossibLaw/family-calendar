@@ -46,3 +46,15 @@ class GoogleCalendarSyncTests(unittest.TestCase):
         self.assertEqual(second, {"created": 0, "updated": 0, "skipped": 1})
         self.assertEqual(gateway.created, 1)
         self.assertEqual(gateway.updated, 0)
+
+    def test_unchanged_source_does_not_overwrite_a_manual_calendar_edit(self) -> None:
+        gateway = FakeCalendarGateway()
+        events = parse_events(SAMPLE_ICS)
+        sync_events(events, gateway, reminder_minutes=30)
+        uid = events[0].uid
+        gateway.events[uid]["summary"] = "Family corrected title"
+
+        result = sync_events(events, gateway, reminder_minutes=30)
+
+        self.assertEqual(result, {"created": 0, "updated": 0, "skipped": 1})
+        self.assertEqual(gateway.events[uid]["summary"], "Family corrected title")

@@ -25,6 +25,20 @@ class PublicTemplateTests(unittest.TestCase):
         self.assertIn(
             "GOOGLE_REFRESH_TOKEN: ${{ secrets.GOOGLE_REFRESH_TOKEN }}", workflow
         )
+        self.assertIn("--changed-since", workflow)
+        self.assertIn("github.event.before", workflow)
+        self.assertIn("queue: max", workflow)
+
+    def test_email_intake_is_scheduled_but_requires_explicit_enablement(self) -> None:
+        workflow = (ROOT / ".github/workflows/process-inbox.yml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("workflow_dispatch:", workflow)
+        self.assertIn("schedule:", workflow)
+        self.assertIn("vars.ENABLE_EMAIL_INTAKE == 'true'", workflow)
+        self.assertIn("secrets.AI_API_KEY", workflow)
+        self.assertIn("queue: max", workflow)
 
     def test_sensitive_local_files_are_ignored(self) -> None:
         ignored = (ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()

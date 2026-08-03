@@ -15,7 +15,22 @@ Security fixes are applied to the latest version on the default branch.
 
 ## Credential safety
 
-Family Calendar needs the narrow Google Calendar `calendar.events` permission. Store
-OAuth values only in GitHub Actions Secrets or the ignored local `.env` file. If a
-credential is exposed, revoke the application's access in the Google Account and
-replace the affected GitHub secrets immediately.
+The repository-only workflow needs the narrow Google Calendar `calendar.events`
+permission. The optional family email inbox additionally needs Gmail `gmail.modify`
+so it can read trusted intake messages and label them after processing. Do not enable
+the Gmail scope if you do not use email intake.
+
+Store OAuth and optional AI values only in GitHub Actions Secrets or the ignored local
+`.env` file. If a credential is exposed, revoke it with the provider and replace the
+affected GitHub secret immediately.
+
+## Email and AI intake
+
+- Keep the family deployment private.
+- Prefer an explicit `trusted_senders` list. `allow_any_sender = true` accepts anyone
+  who discovers the intake alias and is a convenience-versus-spam choice.
+- Email bodies are untrusted data. They are never executed, links are not followed,
+  attachment sizes are bounded, and provider output is checked locally.
+- Only event titles, dates, time zones, recurrence, and useful locations can enter an
+  AI-generated event. Arbitrary response fields are discarded.
+- A failed message is labeled for attention and does not block later messages.

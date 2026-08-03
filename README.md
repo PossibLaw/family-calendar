@@ -15,7 +15,7 @@ screen and tells you exactly what to click.
 - Adds a popup reminder to events that do not already have one.
 - Uses each event's permanent calendar ID to avoid duplicates.
 - Updates an event when its details change.
-- Stops for review if an input is unsupported or ambiguous.
+- Adds every valid event in a trusted batch and reports anything it could not read.
 - Never deletes a calendar event automatically.
 
 ## Important privacy warning
@@ -29,49 +29,53 @@ public Family Calendar repository contains only reusable code and fictional exam
 GitHub does not copy the template owner's Google secrets into your repository. Each
 family connects its own Google account.
 
-## Choose the path that fits your family
+## Three ways to use Family Calendar
 
-You have two good options:
+### 1. Tell your coding agent: “Add this schedule”
 
-- **Fastest: use a coding agent and import once.** Ask an agent to turn the schedule
-  into an `.ics` file, review its event summary, and import it through a browser that
-  is already signed in to Google Calendar. You do not need Python, Google Cloud, OAuth,
-  or a running Family Calendar app.
-- **Best for ongoing family use: automatic syncing.** One person completes the Google
-  Cloud setup below once. After that, family members can submit schedule details from
-  ChatGPT or GitHub without downloading files or installing anything.
+This is the simplest default. Give Codex, Claude, Gemini, or another coding agent the
+private repository and attach or paste the schedule. The repository's `AGENTS.md`
+tells it how to create stable events, remove booking secrets, run the checks, and
+finish the sync. Your request to add the batch is the approval; nobody reviews dozens
+of individual calendar entries.
 
-### Fastest path: coding agent and browser import
+Use this prompt:
 
-This is the same approach used for the first real Family Calendar deployment: a
-coding agent created a reviewed iCalendar file, then imported it through an already
-signed-in Google Calendar browser session. No Google credentials were placed in the
-repository.
+> Read `AGENTS.md`, then add the attached schedule to my family calendar. Treat this
+> request as approval for the whole batch. Preserve recurrences and local time zones,
+> omit booking codes and unrelated personal information, add every valid event, and
+> report only the items you could not place. Run the tests and complete the repository
+> sync without asking me to approve each event.
 
-1. Give the coding agent this repository's URL and your schedule source. Use a private
-   agent workspace when the source contains real family information.
-2. Ask it to create a standards-compliant `.ics` file with stable UIDs, correct local
-   time zones, locations, recurrence rules, and reminders.
-3. Ask for a plain-language event list and review every date, time zone, location, and
-   assumption before approving the import.
-4. If the agent can control a browser you have already signed in to, allow it to open
-   Google Calendar and perform the import. Otherwise, save the `.ics` file and open
-   **Google Calendar** → **Settings** → **Import & export** → **Import**.
-5. Choose the destination calendar, select the `.ics` file, and click **Import**.
+Several family members can do this at once. Each source file is handled independently,
+and calendar writes use stable IDs to prevent duplicates.
 
-You can start with this prompt:
+If you do not want automatic setup yet, the agent can instead create one `.ics` file
+and import it through an already signed-in browser at **Google Calendar** →
+**Settings** → **Import & export**. This one-time path needs no Google Cloud project.
 
-> Use the Family Calendar repository at `[repository URL]` as your guide. Convert the
-> attached or pasted schedule into one validated `.ics` file. Preserve recurring
-> events, use the event's local time zone, add a 30-minute reminder, and use stable
-> unique UIDs. List every event and any uncertainty for my approval before importing.
-> Do not include account credentials, booking codes, loyalty numbers, payment data,
-> or unrelated personal information.
+### 2. Give the family calendar an email inbox
 
-Google's browser import is a one-time import, not a two-way connection. Do not import
-the same file repeatedly, because Google may create duplicates. Use the automatic
-setup below when several people will contribute schedules or when existing events
-need safe updates.
+After the email option is enabled, anyone you trust can forward an `.ics` attachment
+or supported registration PDF to a Gmail plus alias such as
+`yourname+calendar@gmail.com`. Gmail delivers it to `yourname@gmail.com`; no second
+mailbox is required.
+
+The private repository checks that inbox every hour and can also be run immediately
+from GitHub's **Actions** tab. Valid events are added automatically. Successfully
+handled messages receive the `Family Calendar Processed` Gmail label. Messages with
+no usable schedule receive `Family Calendar Needs Attention`; one bad message never
+blocks later valid submissions.
+
+### 3. Optional AI autopilot for ordinary emails and PDFs
+
+Structured `.ics` files and supported PDFs do not need an AI API. To interpret the
+body of an airline, hotel, school, or activity email—or an otherwise unsupported
+text-based PDF—add an optional OpenAI, Anthropic, or Gemini API key. The scheduled
+inbox processor then extracts valid events and adds them automatically.
+
+A ChatGPT, Claude, or Gemini subscription is separate from API access. Autopilot is
+optional; the coding-agent path above continues to work without an API key.
 
 ## Start here: automatic setup for a family
 
@@ -81,6 +85,11 @@ Allow about 20–30 minutes the first time. After setup, adding a schedule is si
 2. Open the `inbox` folder.
 3. Upload the new PDF or `.ics` file.
 4. Wait for the green check mark under **Actions**.
+
+If you want your coding agent to perform setup, give it the repository and say:
+
+> Read `AI_SETUP.md` and set up Family Calendar for me. Keep credentials out of chat
+> and Git, pause only when Google needs my consent, and finish by testing a dry run.
 
 ### Step 1: Make your private family repository
 
@@ -103,6 +112,7 @@ Google requires each family to approve calendar access once.
 3. Name it `Family Calendar`, then click **Create**.
 4. Open **APIs & Services** → **Library**.
 5. Search for `Google Calendar API`, open it, and click **Enable**.
+   If you want the family email inbox, also enable `Gmail API`.
 6. Open **Google Auth Platform** → **Branding** and click **Get Started**.
 7. Use `Family Calendar` for the app name and enter your own email addresses.
 8. For a personal Gmail account, choose **External** as the audience.
@@ -207,6 +217,7 @@ You can also change the default reminder:
 [calendar]
 id = "primary"
 name = "Family Calendar"
+timezone = "America/Chicago"
 reminder_minutes = 30
 ```
 
@@ -221,56 +232,63 @@ reminder_minutes = 30
 7. Open **Sync family calendar**. A green check mark means the sync finished.
 
 The first run creates the events. Later runs skip unchanged events and update changed
-ones. Removing a file does not remove events from Google Calendar.
+ones. A normal push processes only the new or changed source batch, so unrelated
+future imports do not continually overwrite a manual calendar correction or recreate
+an event you deleted. The manual **Sync family calendar** workflow intentionally
+reconciles every repository source when you need a full repair.
 
-## Add a schedule without downloading anything
+## Turn on the family email inbox
 
-After automatic syncing is configured, a family member can contribute from a locked
-down work computer using ChatGPT or GitHub. The repository must be private, and the
-person—or their coding agent—must have access to it.
+Complete the automatic calendar setup above first, then:
 
-### Example: add a work flight and hotel through ChatGPT
+1. Choose a plus alias for the Gmail account you authorized, such as
+   `yourname+calendar@gmail.com`.
+2. Edit `schedule.toml`. Set `intake.address` to that alias. For a closed list, add
+   exact sender addresses to `trusted_senders`. To accept anyone who knows the alias,
+   set `allow_any_sender = true`.
+3. Enable **Gmail API** in the same Google Cloud project.
+4. Run the authorization command again with Gmail enabled:
 
-1. In the itinerary, copy only the facts that belong on the family calendar: traveler
-   name if needed, airline and flight number, departure and arrival airports, local
-   dates and times, hotel name and address, and check-in/check-out dates.
-2. Do not paste a boarding-pass barcode, QR code, reservation or ticket number,
-   loyalty number, passport information, payment details, or the entire confirmation
-   email. Everyone with access to the family calendar may see event details.
-3. Open a coding-agent session from ChatGPT (such as Codex) and give it write access
-   to the **private** family repository. Never send a real itinerary to the public
-   template repository. If your ChatGPT session cannot write to GitHub, use the
-   GitHub-only path below.
-4. Paste the sanitized itinerary with the prompt below.
-5. Have the agent create a branch, add an `.ics` file under `inbox`, run the repository
-   checks, and open a pull request. It should stop and ask about ambiguous dates or time
-   zones instead of guessing.
-6. Review the agent's plain-language event summary. When it is correct, merge the pull
-   request. The private repository's GitHub Action will sync the events.
-7. Confirm the flight and hotel entries in Google Calendar.
+   ```bash
+   .venv/bin/python -m family_schedule authorize --with-gmail
+   ```
 
-Example prompt:
+   On Windows, use `.venv\Scripts\python` instead.
+5. Replace the three existing Google repository secrets with the new `.env` values.
+6. Under **Settings** → **Secrets and variables** → **Actions** → **Variables**, add
+   `ENABLE_EMAIL_INTAKE` with the value `true`.
+7. Forward a test `.ics` attachment to the alias. Run **Process family calendar inbox**
+   from **Actions**, or wait for the hourly run.
 
-> In my private Family Calendar repository, add the work trip below. Create
-> `inbox/work-trip-YYYY-MM.ics` on a new branch and open a pull request. Add separate
-> events for each flight leg and the hotel stay. Use each airport's local time zone,
-> include useful addresses, stable unique UIDs, and a 30-minute reminder. Exclude
-> confirmation numbers, loyalty numbers, barcodes, payment data, and unrelated email
-> text. Show me the proposed event list and mark anything unclear as `UNCONFIRMED`.
-> Do not merge or write to Google Calendar until I approve.
+Example configuration:
 
-### If the person can use GitHub but not ChatGPT
+```toml
+[calendar]
+id = "primary"
+name = "Family Calendar"
+timezone = "America/Chicago"
+reminder_minutes = 30
 
-1. Open the private repository's **Issues** tab and create a new issue titled
-   `Calendar request: work trip`.
-2. Paste the same sanitized facts and identify any uncertain time zones.
-3. Ask a family administrator or a coding agent with repository access to convert that
-   private issue into an `.ics` pull request.
-4. Review and merge the pull request; the automatic sync then adds the events.
+[intake]
+address = "yourname+calendar@gmail.com"
+trusted_senders = ["adult1@example.com", "adult2@example.com"]
+allow_any_sender = false
+```
 
-Creating an issue alone does **not** add anything to Google Calendar. This deliberate
-review step prevents untrusted free-form text from writing directly to the family
-schedule.
+## Turn on optional AI autopilot
+
+Create an API key with the provider you choose. In the private repository's
+**Settings** → **Secrets and variables** → **Actions**:
+
+1. Add the repository secret `AI_API_KEY`.
+2. Add the repository variable `AI_PROVIDER` with `openai`, `anthropic`, or `gemini`.
+3. Add the repository variable `AI_MODEL` using a current model ID from that provider.
+
+The key is sent only to the selected provider. Email text is treated as untrusted data,
+provider output is checked locally, unknown output fields are discarded, and API
+errors never print the key. Autopilot keeps useful names, dates, times, flight numbers,
+and locations while instructing the provider to omit confirmation numbers, loyalty
+numbers, payment data, barcodes, and unrelated email text.
 
 ## Which files work?
 
@@ -289,8 +307,8 @@ A PDF works automatically only when it contains an official Active Communities
 calendar-download link hosted on `anprod.active.com`. Family Calendar extracts that
 link, verifies the host, and downloads the official event data.
 
-Other PDFs stop safely instead of guessing dates. Export those activities as `.ics`,
-or add a new provider parser through a contribution.
+Without AI autopilot, other PDFs stop safely instead of guessing dates. Autopilot can
+extract text-based PDFs, or a coding agent can convert them into `.ics` files.
 
 ## Easier manual option: no Google API setup
 
@@ -326,6 +344,9 @@ safe, repeatable updates.
 The `ENABLE_CALENDAR_SYNC` repository variable is missing or is not exactly `true`.
 Repeat Step 5.
 
+For **Process family calendar inbox**, also confirm that `ENABLE_EMAIL_INTAKE` is
+exactly `true`.
+
 ### “Missing Google OAuth environment variables”
 
 One of the three GitHub secrets in Step 4 is missing or its name is misspelled. Secret
@@ -353,7 +374,13 @@ the folder.
 ### “PDF has no trusted Park District calendar feed”
 
 The PDF does not contain a supported official calendar link. Look for an `.ics` or
-**Add to calendar** download from the activity provider.
+**Add to calendar** download, use a coding agent, or configure AI autopilot.
+
+### An email is labeled “Family Calendar Needs Attention”
+
+The sender was not trusted, the attachment was unsupported, or the message contained
+no event with a usable date and time. Correct `schedule.toml`, add AI autopilot, or
+remove the label after fixing the source to retry it.
 
 ### The same activity appears twice
 
@@ -364,6 +391,10 @@ then run the workflow again.
 ## Safety and privacy design
 
 - OAuth values are read from GitHub Secrets or the ignored local `.env` file.
+- Email polling is disabled until `ENABLE_EMAIL_INTAKE` is explicitly set to `true`.
+- Senders must be listed or `allow_any_sender` must be deliberately enabled.
+- Free-form text is sent to an AI provider only when all three AI settings are present.
+- AI output is schema-checked and cannot copy arbitrary email fields into events.
 - `credentials.json`, `.env`, build output, and private deployment files are ignored.
 - Remote calendar downloads require HTTPS and an explicit host allow-list.
 - Remote calendar downloads have a 5 MB limit and a 30-second timeout; local source
@@ -379,13 +410,17 @@ python3 -m venv .venv
 .venv/bin/python -m pip install -e .
 PYTHONPATH=src .venv/bin/python -m unittest discover -s tests -v
 .venv/bin/python -m family_schedule build
+.venv/bin/python -m family_schedule sync --dry-run
 .venv/bin/python -m family_schedule apply --dry-run
 ```
 
 The main commands are:
 
 - `authorize`: opens Google's authorization page and saves a private `.env` file.
-- `build`: validates and combines schedule sources into one reviewed iCalendar file.
+- `build`: validates and combines schedule sources into one iCalendar file.
+- `sync`: builds and applies one trusted batch; `--changed-since` limits a push to its
+  new or modified sources.
+- `process-inbox`: processes trusted Gmail batches and labels each message afterward.
 - `apply --dry-run`: reports how many records would be processed without writing.
 - `apply`: creates, updates, or skips Google Calendar events idempotently.
 

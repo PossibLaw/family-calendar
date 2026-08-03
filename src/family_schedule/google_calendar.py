@@ -114,38 +114,38 @@ class GoogleCredentials:
         return cls(*(str(values[name]) for name in names))
 
 
+def refresh_google_access_token(credentials: GoogleCredentials) -> str:
+    body = urlencode(
+        {
+            "client_id": credentials.client_id,
+            "client_secret": credentials.client_secret,
+            "refresh_token": credentials.refresh_token,
+            "grant_type": "refresh_token",
+        }
+    ).encode("utf-8")
+    request = Request(
+        "https://oauth2.googleapis.com/token",
+        data=body,
+        method="POST",
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    try:
+        with urlopen(request, timeout=30) as response:
+            result = json.loads(response.read().decode("utf-8"))
+    except HTTPError as error:
+        raise RuntimeError(
+            f"Google OAuth token refresh failed with HTTP {error.code}"
+        ) from error
+    token = result.get("access_token")
+    if not isinstance(token, str) or not token:
+        raise RuntimeError("Google OAuth response did not contain an access token")
+    return token
+
+
 class GoogleCalendarGateway:
     def __init__(self, calendar_id: str, credentials: GoogleCredentials) -> None:
         self.calendar_id = calendar_id
-        self.access_token = self._refresh_access_token(credentials)
-
-    @staticmethod
-    def _refresh_access_token(credentials: GoogleCredentials) -> str:
-        body = urlencode(
-            {
-                "client_id": credentials.client_id,
-                "client_secret": credentials.client_secret,
-                "refresh_token": credentials.refresh_token,
-                "grant_type": "refresh_token",
-            }
-        ).encode("utf-8")
-        request = Request(
-            "https://oauth2.googleapis.com/token",
-            data=body,
-            method="POST",
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-        )
-        try:
-            with urlopen(request, timeout=30) as response:
-                result = json.loads(response.read().decode("utf-8"))
-        except HTTPError as error:
-            raise RuntimeError(
-                f"Google OAuth token refresh failed with HTTP {error.code}"
-            ) from error
-        token = result.get("access_token")
-        if not isinstance(token, str) or not token:
-            raise RuntimeError("Google OAuth response did not contain an access token")
-        return token
+        self.access_token = refresh_google_access_token(credentials)
 
     def _request_json(
         self,

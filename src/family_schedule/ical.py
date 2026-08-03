@@ -58,7 +58,7 @@ def _unescape_text(value: str) -> str:
     )
 
 
-def _escape_text(value: str) -> str:
+def escape_ical_text(value: str) -> str:
     return (
         value.replace("\\", "\\\\")
         .replace("\n", "\\n")
@@ -181,7 +181,7 @@ def build_calendar(
         "VERSION:2.0",
         "PRODID:-//Family Calendar//Schedule Import//EN",
         "CALSCALE:GREGORIAN",
-        "X-WR-CALNAME:" + _escape_text(calendar_name),
+        "X-WR-CALNAME:" + escape_ical_text(calendar_name),
     ]
     if time_zone_component:
         output.extend(time_zone_component)
