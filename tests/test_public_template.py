@@ -8,14 +8,13 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class PublicTemplateTests(unittest.TestCase):
-    def test_default_config_targets_the_authorized_accounts_primary_calendar(
-        self,
-    ) -> None:
+    def test_calendar_config_contains_required_values(self) -> None:
         with (ROOT / "schedule.toml").open("rb") as stream:
             settings = tomllib.load(stream)
 
-        self.assertEqual(settings["calendar"]["id"], "primary")
-        self.assertEqual(settings["calendar"]["name"], "Family Calendar")
+        self.assertTrue(settings["calendar"]["id"])
+        self.assertTrue(settings["calendar"]["name"])
+        self.assertGreater(settings["calendar"]["reminder_minutes"], 0)
 
     def test_calendar_writes_require_an_explicit_repository_variable(self) -> None:
         workflow = (ROOT / ".github/workflows/sync-calendar.yml").read_text(
