@@ -284,6 +284,26 @@ DATA
                 value = result["choices"][0]["message"]["content"]  # type: ignore[index]
             except (KeyError, IndexError, TypeError) as error:
                 raise RuntimeError("OpenAI returned no event output") from error
+        elif self.provider == "openrouter":
+            result = self._request(
+                "https://openrouter.ai/api/v1/chat/completions",
+                {
+                    "Authorization": f"Bearer {self.api_key}",
+                    "HTTP-Referer": "https://github.com/PossibLaw/family-calendar",
+                    "X-OpenRouter-Title": "Family Calendar",
+                },
+                {
+                    "model": self.model,
+                    "messages": [
+                        {"role": "system", "content": "Return only valid JSON."},
+                        {"role": "user", "content": prompt},
+                    ],
+                },
+            )
+            try:
+                value = result["choices"][0]["message"]["content"]  # type: ignore[index]
+            except (KeyError, IndexError, TypeError) as error:
+                raise RuntimeError("OpenRouter returned no event output") from error
         elif self.provider == "anthropic":
             result = self._request(
                 "https://api.anthropic.com/v1/messages",

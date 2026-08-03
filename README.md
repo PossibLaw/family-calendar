@@ -281,8 +281,14 @@ Create an API key with the provider you choose. In the private repository's
 **Settings** → **Secrets and variables** → **Actions**:
 
 1. Add the repository secret `AI_API_KEY`.
-2. Add the repository variable `AI_PROVIDER` with `openai`, `anthropic`, or `gemini`.
+2. Add the repository variable `AI_PROVIDER` with `openai`, `anthropic`, `gemini`, or
+   `openrouter`.
 3. Add the repository variable `AI_MODEL` using a current model ID from that provider.
+
+For OpenRouter, create a key at [OpenRouter API Keys](https://openrouter.ai/settings/keys),
+set `AI_PROVIDER` to `openrouter`, and copy an exact model slug from the
+[OpenRouter model catalog](https://openrouter.ai/models) into `AI_MODEL`. The same
+`AI_API_KEY` secret is used; no additional repository secret is needed.
 
 The key is sent only to the selected provider. Email text is treated as untrusted data,
 provider output is checked locally, unknown output fields are discarded, and API
