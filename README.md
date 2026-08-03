@@ -29,6 +29,50 @@ public Family Calendar repository contains only reusable code and fictional exam
 GitHub does not copy the template owner's Google secrets into your repository. Each
 family connects its own Google account.
 
+## Choose the path that fits your family
+
+You have two good options:
+
+- **Fastest: use a coding agent and import once.** Ask an agent to turn the schedule
+  into an `.ics` file, review its event summary, and import it through a browser that
+  is already signed in to Google Calendar. You do not need Python, Google Cloud, OAuth,
+  or a running Family Calendar app.
+- **Best for ongoing family use: automatic syncing.** One person completes the Google
+  Cloud setup below once. After that, family members can submit schedule details from
+  ChatGPT or GitHub without downloading files or installing anything.
+
+### Fastest path: coding agent and browser import
+
+This is the same approach used for the first real Family Calendar deployment: a
+coding agent created a reviewed iCalendar file, then imported it through an already
+signed-in Google Calendar browser session. No Google credentials were placed in the
+repository.
+
+1. Give the coding agent this repository's URL and your schedule source. Use a private
+   agent workspace when the source contains real family information.
+2. Ask it to create a standards-compliant `.ics` file with stable UIDs, correct local
+   time zones, locations, recurrence rules, and reminders.
+3. Ask for a plain-language event list and review every date, time zone, location, and
+   assumption before approving the import.
+4. If the agent can control a browser you have already signed in to, allow it to open
+   Google Calendar and perform the import. Otherwise, save the `.ics` file and open
+   **Google Calendar** → **Settings** → **Import & export** → **Import**.
+5. Choose the destination calendar, select the `.ics` file, and click **Import**.
+
+You can start with this prompt:
+
+> Use the Family Calendar repository at `[repository URL]` as your guide. Convert the
+> attached or pasted schedule into one validated `.ics` file. Preserve recurring
+> events, use the event's local time zone, add a 30-minute reminder, and use stable
+> unique UIDs. List every event and any uncertainty for my approval before importing.
+> Do not include account credentials, booking codes, loyalty numbers, payment data,
+> or unrelated personal information.
+
+Google's browser import is a one-time import, not a two-way connection. Do not import
+the same file repeatedly, because Google may create duplicates. Use the automatic
+setup below when several people will contribute schedules or when existing events
+need safe updates.
+
 ## Start here: automatic setup for a family
 
 Allow about 20–30 minutes the first time. After setup, adding a schedule is simply:
@@ -178,6 +222,55 @@ reminder_minutes = 30
 
 The first run creates the events. Later runs skip unchanged events and update changed
 ones. Removing a file does not remove events from Google Calendar.
+
+## Add a schedule without downloading anything
+
+After automatic syncing is configured, a family member can contribute from a locked
+down work computer using ChatGPT or GitHub. The repository must be private, and the
+person—or their coding agent—must have access to it.
+
+### Example: add a work flight and hotel through ChatGPT
+
+1. In the itinerary, copy only the facts that belong on the family calendar: traveler
+   name if needed, airline and flight number, departure and arrival airports, local
+   dates and times, hotel name and address, and check-in/check-out dates.
+2. Do not paste a boarding-pass barcode, QR code, reservation or ticket number,
+   loyalty number, passport information, payment details, or the entire confirmation
+   email. Everyone with access to the family calendar may see event details.
+3. Open a coding-agent session from ChatGPT (such as Codex) and give it write access
+   to the **private** family repository. Never send a real itinerary to the public
+   template repository. If your ChatGPT session cannot write to GitHub, use the
+   GitHub-only path below.
+4. Paste the sanitized itinerary with the prompt below.
+5. Have the agent create a branch, add an `.ics` file under `inbox`, run the repository
+   checks, and open a pull request. It should stop and ask about ambiguous dates or time
+   zones instead of guessing.
+6. Review the agent's plain-language event summary. When it is correct, merge the pull
+   request. The private repository's GitHub Action will sync the events.
+7. Confirm the flight and hotel entries in Google Calendar.
+
+Example prompt:
+
+> In my private Family Calendar repository, add the work trip below. Create
+> `inbox/work-trip-YYYY-MM.ics` on a new branch and open a pull request. Add separate
+> events for each flight leg and the hotel stay. Use each airport's local time zone,
+> include useful addresses, stable unique UIDs, and a 30-minute reminder. Exclude
+> confirmation numbers, loyalty numbers, barcodes, payment data, and unrelated email
+> text. Show me the proposed event list and mark anything unclear as `UNCONFIRMED`.
+> Do not merge or write to Google Calendar until I approve.
+
+### If the person can use GitHub but not ChatGPT
+
+1. Open the private repository's **Issues** tab and create a new issue titled
+   `Calendar request: work trip`.
+2. Paste the same sanitized facts and identify any uncertain time zones.
+3. Ask a family administrator or a coding agent with repository access to convert that
+   private issue into an `.ics` pull request.
+4. Review and merge the pull request; the automatic sync then adds the events.
+
+Creating an issue alone does **not** add anything to Google Calendar. This deliberate
+review step prevents untrusted free-form text from writing directly to the family
+schedule.
 
 ## Which files work?
 
