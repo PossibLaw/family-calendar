@@ -22,8 +22,9 @@ agent. The person setting up the calendar should not need to edit code.
 5. Store the three Google values directly as GitHub Secrets.
 6. Set `ENABLE_CALENDAR_SYNC=true` only after tests and a dry run pass.
 7. For email intake, set `ENABLE_EMAIL_INTAKE=true` and test one `.ics` email.
-8. For AI autopilot, store `AI_API_KEY` as a secret and set `AI_PROVIDER` and
-   `AI_MODEL` as variables. Never assume a chat subscription includes API usage.
+8. For AI autopilot, store `AI_API_KEY` as a secret and set `AI_PROVIDER` to
+   `openai`, `anthropic`, `gemini`, or `openrouter`; set `AI_MODEL` to a current
+   model ID from that provider. Never assume a chat subscription includes API usage.
 9. Show the family how to say “add this schedule,” forward to the intake alias, and
    add one-off events manually.
 

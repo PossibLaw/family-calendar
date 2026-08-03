@@ -4,6 +4,7 @@ import json
 import unittest
 from typing import Self
 from unittest.mock import patch
+from urllib.error import HTTPError
 
 from family_schedule.ai import (
     HostedAIExtractor,
@@ -100,6 +101,7 @@ class AIExtractionTests(unittest.TestCase):
     def test_hosted_extractors_return_the_same_validated_payload_shape(self) -> None:
         cases = {
             "openai": {"choices": [{"message": {"content": '{"events": []}'}}]},
+            "openrouter": {"choices": [{"message": {"content": '{"events": []}'}}]},
             "anthropic": {"content": [{"type": "text", "text": '{"events": []}'}]},
             "gemini": {
                 "candidates": [{"content": {"parts": [{"text": '{"events": []}'}]}}]
@@ -125,6 +127,32 @@ class AIExtractionTests(unittest.TestCase):
                     {"events": []},
                 )
 
+    def test_openrouter_uses_its_api_endpoint_and_app_attribution(self) -> None:
+        response = {"choices": [{"message": {"content": '{"events": []}'}}]}
+        with patch(
+            "family_schedule.ai.urlopen", return_value=_Response(response)
+        ) as request_call:
+            extractor = HostedAIExtractor(
+                provider="openrouter",
+                api_key="test-key",
+                model="anthropic/claude-sonnet-4",
+            )
+
+            extractor.extract("A harmless itinerary", default_timezone="UTC")
+
+        request = request_call.call_args.args[0]
+        headers = {name.lower(): value for name, value in request.header_items()}
+        body = json.loads(request.data)
+        self.assertEqual(
+            request.full_url, "https://openrouter.ai/api/v1/chat/completions"
+        )
+        self.assertEqual(headers["authorization"], "Bearer test-key")
+        self.assertEqual(
+            headers["http-referer"], "https://github.com/PossibLaw/family-calendar"
+        )
+        self.assertEqual(headers["x-openrouter-title"], "Family Calendar")
+        self.assertEqual(body["model"], "anthropic/claude-sonnet-4")
+
     def test_ai_provider_errors_do_not_echo_api_keys(self) -> None:
         extractor = HostedAIExtractor(
             provider="unsupported",
@@ -133,6 +161,30 @@ class AIExtractionTests(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(ValueError, "Unsupported AI provider") as raised:
+            extractor.extract("schedule", default_timezone="America/Chicago")
+
+        self.assertNotIn("do-not-print-this", str(raised.exception))
+
+    def test_openrouter_http_errors_do_not_echo_api_keys(self) -> None:
+        extractor = HostedAIExtractor(
+            provider="openrouter",
+            api_key="do-not-print-this",
+            model="anthropic/claude-sonnet-4",
+        )
+        error = HTTPError(
+            "https://openrouter.ai/api/v1/chat/completions",
+            429,
+            "rate limited",
+            hdrs=None,
+            fp=None,
+        )
+
+        with (
+            patch("family_schedule.ai.urlopen", side_effect=error),
+            self.assertRaisesRegex(
+                RuntimeError, "openrouter AI request failed with 429"
+            ) as raised,
+        ):
             extractor.extract("schedule", default_timezone="America/Chicago")
 
         self.assertNotIn("do-not-print-this", str(raised.exception))
