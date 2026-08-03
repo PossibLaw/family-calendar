@@ -1,0 +1,40 @@
+name: Sync family calendar
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "inbox/**"
+      - "schedule.toml"
+      - "src/**"
+      - "pyproject.toml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: family-calendar-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    # The public template never writes to a calendar. A family must explicitly
+    # enable this variable in its own private repository.
+    if: ${{ vars.ENABLE_CALENDAR_SYNC == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install .
+      - run: python -m unittest discover -s tests -v
+        env:
+          PYTHONPATH: src
+      - run: python -m family_schedule build
+      - run: python -m family_schedule apply
+        env:
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          GOOGLE_REFRESH_TOKEN: ${{ secrets.GOOGLE_REFRESH_TOKEN }}
