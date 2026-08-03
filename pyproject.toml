@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "family-calendar"
-version = "0.1.0"
-description = "A safe, repeatable way to add family activity files to Google Calendar"
+version = "0.2.0"
+description = "Agent, email, and AI-assisted family schedule syncing for Google Calendar"
 requires-python = ">=3.11"
 dependencies = [
   "google-auth-oauthlib>=1.2.0",

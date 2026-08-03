@@ -1,0 +1,36 @@
+name: Process family calendar inbox
+
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: family-calendar-inbox
+  queue: max
+
+jobs:
+  process:
+    if: ${{ vars.ENABLE_EMAIL_INTAKE == 'true' && vars.ENABLE_CALENDAR_SYNC == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install .
+      - run: python -m unittest discover -s tests -v
+        env:
+          PYTHONPATH: src
+      - name: Process trusted schedule email
+        run: python -m family_schedule process-inbox
+        env:
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          GOOGLE_REFRESH_TOKEN: ${{ secrets.GOOGLE_REFRESH_TOKEN }}
+          AI_PROVIDER: ${{ vars.AI_PROVIDER }}
+          AI_MODEL: ${{ vars.AI_MODEL }}
+          AI_API_KEY: ${{ secrets.AI_API_KEY }}

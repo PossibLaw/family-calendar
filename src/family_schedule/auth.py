@@ -4,6 +4,14 @@ import os
 from pathlib import Path
 
 CALENDAR_EVENTS_SCOPE = "https://www.googleapis.com/auth/calendar.events"
+GMAIL_MODIFY_SCOPE = "https://www.googleapis.com/auth/gmail.modify"
+
+
+def oauth_scopes(*, with_gmail: bool) -> list[str]:
+    scopes = [CALENDAR_EVENTS_SCOPE]
+    if with_gmail:
+        scopes.append(GMAIL_MODIFY_SCOPE)
+    return scopes
 
 
 def _safe_env_value(value: str, name: str) -> str:
@@ -32,7 +40,9 @@ def write_env_file(
     os.chmod(path, 0o600)
 
 
-def authorize_google(credentials_path: Path, output_path: Path) -> Path:
+def authorize_google(
+    credentials_path: Path, output_path: Path, *, with_gmail: bool = False
+) -> Path:
     """Run Google's desktop OAuth flow and save only the values needed for sync."""
     if not credentials_path.is_file():
         raise RuntimeError(
@@ -45,7 +55,7 @@ def authorize_google(credentials_path: Path, output_path: Path) -> Path:
 
     flow = InstalledAppFlow.from_client_secrets_file(
         str(credentials_path),
-        scopes=[CALENDAR_EVENTS_SCOPE],
+        scopes=oauth_scopes(with_gmail=with_gmail),
     )
     credentials = flow.run_local_server(
         port=0,

@@ -6,11 +6,25 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from family_schedule.auth import write_env_file
+from family_schedule.auth import (
+    CALENDAR_EVENTS_SCOPE,
+    GMAIL_MODIFY_SCOPE,
+    oauth_scopes,
+    write_env_file,
+)
 from family_schedule.google_calendar import GoogleCredentials
 
 
 class AuthorizationTests(unittest.TestCase):
+    def test_email_intake_authorization_adds_gmail_without_expanding_calendar_only(
+        self,
+    ) -> None:
+        self.assertEqual(oauth_scopes(with_gmail=False), [CALENDAR_EVENTS_SCOPE])
+        self.assertEqual(
+            oauth_scopes(with_gmail=True),
+            [CALENDAR_EVENTS_SCOPE, GMAIL_MODIFY_SCOPE],
+        )
+
     def test_writes_only_required_oauth_values_to_private_env_file(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / ".env"
