@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "family-calendar"
+version = "0.1.0"
+description = "A safe, repeatable way to add family activity files to Google Calendar"
+requires-python = ">=3.11"
+dependencies = [
+  "google-auth-oauthlib>=1.2.0",
+  "pypdf>=5.0.0",
+]
+
+[project.scripts]
+family-calendar = "family_schedule.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

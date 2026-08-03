@@ -1,0 +1,7 @@
+[calendar]
+id = "primary"
+name = "Family Calendar"
+reminder_minutes = 30
+
+[providers]
+allowed_ical_hosts = ["anprod.active.com"]
