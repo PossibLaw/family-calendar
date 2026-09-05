@@ -10,7 +10,9 @@ from family_schedule.inbox import (
     GmailGateway,
     InboxAttachment,
     InboxMessage,
+    intake_search_query,
     process_inbox,
+    quarantined_search_query,
 )
 
 
@@ -20,14 +22,22 @@ class FakeMailGateway:
         self.processed: list[str] = []
         self.needs_attention: list[str] = []
 
-    def list_messages(self, intake_address: str) -> list[InboxMessage]:
+    def list_messages(
+        self, intake_address: str, sender_allowlist: object = None
+    ) -> list[InboxMessage]:
         self.intake_address = intake_address
+        self.sender_allowlist = sender_allowlist
         return [
             message
             for message in self.messages
             if message.message_id not in self.processed
             and message.message_id not in self.needs_attention
         ]
+
+    def count_quarantined(
+        self, intake_address: str, sender_allowlist: object = None
+    ) -> int:
+        return 0
 
     def mark_processed(self, message_id: str) -> None:
         self.processed.append(message_id)
@@ -223,6 +233,7 @@ class InboxProcessingTests(unittest.TestCase):
                 "events": [
                     {
                         "source_key": "hotel-2026-10-12",
+                        "category": "lodging",
                         "title": "Work trip hotel",
                         "start": "2026-10-12",
                         "end": "2026-10-15",
@@ -294,3 +305,149 @@ class InboxProcessingTests(unittest.TestCase):
         self.assertEqual(result["messages_needing_attention"], 1)
         self.assertEqual(extractor.calls, [])
         self.assertEqual(mail.needs_attention, ["untrusted-message"])
+
+
+class IntakeSearchQueryTests(unittest.TestCase):
+    ADDRESS = "family+calendar@gmail.com"
+
+    def test_alias_is_matched_in_every_recipient_header_not_just_delivered_to(
+        self,
+    ) -> None:
+        query = intake_search_query(self.ADDRESS)
+
+        self.assertIn("{", query)
+        for operator in ("deliveredto", "to", "cc", "bcc"):
+            self.assertIn(f"{operator}:{self.ADDRESS}", query)
+
+    def test_pending_search_excludes_already_labelled_messages(self) -> None:
+        query = intake_search_query(self.ADDRESS)
+
+        self.assertIn('-label:"Family Calendar Processed"', query)
+        self.assertIn('-label:"Family Calendar Needs Attention"', query)
+
+    def test_bare_account_address_is_never_searched(self) -> None:
+        for query in (
+            intake_search_query(self.ADDRESS),
+            quarantined_search_query(self.ADDRESS),
+        ):
+            self.assertNotIn("deliveredto:family@gmail.com", query)
+            self.assertNotIn("to:family@gmail.com", query)
+
+    def test_quarantined_search_looks_only_in_spam_and_trash(self) -> None:
+        query = quarantined_search_query(self.ADDRESS)
+
+        self.assertIn("{in:spam in:trash}", query)
+        self.assertNotIn("-label:", query)
+
+    def test_invalid_intake_addresses_are_rejected(self) -> None:
+        for address in ("", "not-an-address", "spaced address@gmail.com"):
+            with self.assertRaises(ValueError):
+                intake_search_query(address)
+
+
+class QuarantineReportingTests(unittest.TestCase):
+    class _Gateway(FakeMailGateway):
+        def __init__(self, quarantined: int | Exception) -> None:
+            super().__init__([])
+            self.quarantined = quarantined
+
+        def count_quarantined(
+            self, intake_address: str, sender_allowlist: object = None
+        ) -> int:
+            if isinstance(self.quarantined, Exception):
+                raise self.quarantined
+            return self.quarantined
+
+    def _run(self, gateway: FakeMailGateway) -> dict[str, int]:
+        return process_inbox(
+            gateway,
+            FakeCalendarGateway(),
+            intake_address="family+calendar@gmail.com",
+            trusted_senders=set(),
+            allow_any_sender=True,
+            allowed_ical_hosts=set(),
+            calendar_name="Family",
+            default_timezone="America/Chicago",
+            reminder_minutes=30,
+        )
+
+    def test_spam_filtered_intake_mail_is_reported_not_silently_dropped(self) -> None:
+        totals = self._run(self._Gateway(3))
+
+        self.assertEqual(totals["messages_seen"], 0)
+        self.assertEqual(totals["messages_in_spam_or_trash"], 3)
+
+    def test_a_failing_diagnostic_never_blocks_processing(self) -> None:
+        totals = self._run(self._Gateway(RuntimeError("Gmail is unavailable")))
+
+        self.assertEqual(totals["messages_in_spam_or_trash"], 0)
+
+
+class SenderAllowlistQueryTests(unittest.TestCase):
+    ADDRESS = "family@example.com"
+    SENDERS = ("b@example.com", "a@example.com")
+
+    def test_untrusted_mail_is_excluded_by_gmail_not_by_the_processor(self) -> None:
+        query = intake_search_query(self.ADDRESS, self.SENDERS)
+
+        self.assertIn("{from:a@example.com from:b@example.com}", query)
+
+    def test_allowing_any_sender_adds_no_sender_restriction(self) -> None:
+        query = intake_search_query(self.ADDRESS, None)
+
+        self.assertNotIn("from:", query)
+
+    def test_sender_matching_ignores_case_and_padding(self) -> None:
+        query = intake_search_query(self.ADDRESS, ("  A@Example.COM ",))
+
+        self.assertIn("{from:a@example.com}", query)
+
+    def test_an_empty_allowlist_is_refused_rather_than_opening_the_mailbox(
+        self,
+    ) -> None:
+        # An empty set must never degrade into "match every sender".
+        for allowlist in ((), ("   ",)):
+            with self.subTest(allowlist=allowlist), self.assertRaises(ValueError):
+                intake_search_query(self.ADDRESS, allowlist)
+
+    def test_a_malformed_sender_cannot_inject_query_terms(self) -> None:
+        with self.assertRaises(ValueError):
+            intake_search_query(self.ADDRESS, ('a@example.com" OR to:victim',))
+
+    def test_quarantine_search_applies_the_same_sender_restriction(self) -> None:
+        query = quarantined_search_query(self.ADDRESS, self.SENDERS)
+
+        self.assertIn("{from:a@example.com from:b@example.com}", query)
+        self.assertIn("{in:spam in:trash}", query)
+
+    def test_process_inbox_hands_the_allowlist_to_the_mail_gateway(self) -> None:
+        mail = FakeMailGateway([])
+        process_inbox(
+            mail,
+            FakeCalendarGateway(),
+            intake_address=self.ADDRESS,
+            trusted_senders={"a@example.com"},
+            allow_any_sender=False,
+            allowed_ical_hosts=set(),
+            calendar_name="Family",
+            default_timezone="America/Chicago",
+            reminder_minutes=30,
+        )
+
+        self.assertEqual(mail.sender_allowlist, {"a@example.com"})
+
+    def test_allow_any_sender_passes_no_allowlist_through(self) -> None:
+        mail = FakeMailGateway([])
+        process_inbox(
+            mail,
+            FakeCalendarGateway(),
+            intake_address=self.ADDRESS,
+            trusted_senders=set(),
+            allow_any_sender=True,
+            allowed_ical_hosts=set(),
+            calendar_name="Family",
+            default_timezone="America/Chicago",
+            reminder_minutes=30,
+        )
+
+        self.assertIsNone(mail.sender_allowlist)

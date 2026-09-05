@@ -22,7 +22,7 @@ UID:tennis-1@example.test
 DTSTART;TZID=America/Chicago:20260819T153000
 DTEND;TZID=America/Chicago:20260819T163000
 SUMMARY:Tennis Youth Red 2: Fall I
-LOCATION:186 S West Ave\\, Elmhurst\\, IL 60126
+LOCATION:1 Example Court\\, Exampletown\\, IL 60000
 END:VEVENT
 END:VCALENDAR
 """
@@ -51,7 +51,7 @@ class CalendarImportTests(unittest.TestCase):
 
     def test_discovers_line_wrapped_park_district_calendar_urls(self) -> None:
         text = (
-            "Download: https://anprod.active.com/elmhurstparks/servlet/"
+            "Download: https://anprod.active.com/exampleparks/servlet/"
             "RegistrationScheduleiCalFile.sdi?cid=F4B20E870A37AC&rh=\n"
             "FA8D0B8F0835A5FD"
         )
@@ -60,7 +60,7 @@ class CalendarImportTests(unittest.TestCase):
             discover_park_district_urls(text),
             [
                 (
-                    "https://anprod.active.com/elmhurstparks/servlet/"
+                    "https://anprod.active.com/exampleparks/servlet/"
                     "RegistrationScheduleiCalFile.sdi?cid=F4B20E870A37AC"
                     "&rh=FA8D0B8F0835A5FD"
                 )

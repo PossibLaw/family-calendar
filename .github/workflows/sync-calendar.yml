@@ -26,7 +26,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          # --changed-since diffs against github.event.before, which a shallow
+          # checkout does not contain after a squash or rebase merge.
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -44,7 +46,7 @@ jobs:
           GOOGLE_REFRESH_TOKEN: ${{ secrets.GOOGLE_REFRESH_TOKEN }}
       - name: Manually reconcile every repository source
         if: ${{ github.event_name == 'workflow_dispatch' }}
-        run: python -m family_schedule sync
+        run: python -m family_schedule sync --max-new 25
         env:
           GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
           GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}

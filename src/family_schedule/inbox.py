@@ -5,6 +5,7 @@ import html
 import json
 import re
 import tempfile
+from collections.abc import Collection
 from dataclasses import dataclass
 from email.utils import parseaddr
 from pathlib import Path
@@ -25,8 +26,84 @@ from .sources import MAX_SOURCE_BYTES, calendars_from_source, extract_pdf_text
 
 MAX_GMAIL_RESPONSE_BYTES = 30 * 1024 * 1024
 MAX_MESSAGES_PER_RUN = 500
+MAX_QUARANTINED_PER_RUN = 100
 PROCESSED_LABEL = "Family Calendar Processed"
 NEEDS_ATTENTION_LABEL = "Family Calendar Needs Attention"
+
+# Gmail records the intake alias in different headers depending on how the
+# message reached the mailbox. ``deliveredto:`` only matches the Delivered-To
+# header, which for a plus alias often carries the bare account address instead,
+# so an alias-only ``deliveredto:`` search silently returns nothing. Matching the
+# recipient headers as well keeps forwarded mail visible. The bare account
+# address is deliberately never searched: the alias is the trust boundary.
+INTAKE_MATCH_OPERATORS = ("deliveredto", "to", "cc", "bcc")
+
+
+def validate_intake_address(intake_address: str) -> str:
+    if (
+        not intake_address
+        or "@" not in intake_address
+        or any(character.isspace() for character in intake_address)
+    ):
+        raise ValueError("Email intake address is invalid")
+    return intake_address
+
+
+def _alias_group(intake_address: str) -> str:
+    terms = " ".join(
+        f"{operator}:{intake_address}" for operator in INTAKE_MATCH_OPERATORS
+    )
+    return "{" + terms + "}"
+
+
+def _sender_group(sender_allowlist: Collection[str] | None) -> str:
+    """Restrict the search to trusted senders, server side.
+
+    When the intake address is the plain account address the alias no longer
+    narrows anything, so without this Gmail would hand back the whole mailbox: the
+    processor would download every unrelated message and attachment and then label
+    each one for attention. Gmail applies the sender filter instead, so untrusted
+    mail is never fetched and never touched.
+    """
+    if sender_allowlist is None:
+        return ""
+    senders = sorted(
+        {sender.strip().lower() for sender in sender_allowlist if sender.strip()}
+    )
+    if not senders:
+        raise ValueError(
+            "intake.allow_any_sender is false but intake.trusted_senders is empty"
+        )
+    for sender in senders:
+        validate_intake_address(sender)
+    return " {" + " ".join(f"from:{sender}" for sender in senders) + "}"
+
+
+def intake_search_query(
+    intake_address: str, sender_allowlist: Collection[str] | None = None
+) -> str:
+    """Build the Gmail query for schedule mail still awaiting processing."""
+    validate_intake_address(intake_address)
+    return (
+        f"{_alias_group(intake_address)}{_sender_group(sender_allowlist)} "
+        f'-label:"{PROCESSED_LABEL}" -label:"{NEEDS_ATTENTION_LABEL}"'
+    )
+
+
+def quarantined_search_query(
+    intake_address: str, sender_allowlist: Collection[str] | None = None
+) -> str:
+    """Build the Gmail query for intake mail Gmail filed in Spam or Trash.
+
+    These messages are counted for reporting only. Processing them automatically
+    would let anyone who reaches the intake address push events past Gmail's spam
+    filter.
+    """
+    validate_intake_address(intake_address)
+    return (
+        f"{_alias_group(intake_address)}{_sender_group(sender_allowlist)} "
+        "{in:spam in:trash}"
+    )
 
 
 @dataclass(frozen=True)
@@ -46,7 +123,13 @@ class InboxMessage:
 
 
 class MailGateway(Protocol):
-    def list_messages(self, intake_address: str) -> list[InboxMessage]: ...
+    def list_messages(
+        self, intake_address: str, sender_allowlist: Collection[str] | None
+    ) -> list[InboxMessage]: ...
+
+    def count_quarantined(
+        self, intake_address: str, sender_allowlist: Collection[str] | None
+    ) -> int: ...
 
     def mark_processed(self, message_id: str) -> None: ...
 
@@ -236,21 +319,15 @@ class GmailGateway:
             attachments=tuple(attachments),
         )
 
-    def list_messages(self, intake_address: str) -> list[InboxMessage]:
-        if (
-            not intake_address
-            or "@" not in intake_address
-            or any(character.isspace() for character in intake_address)
-        ):
-            raise ValueError("Email intake address is invalid")
-        query = (
-            f"deliveredto:{intake_address} "
-            f'-label:"{PROCESSED_LABEL}" -label:"{NEEDS_ATTENTION_LABEL}"'
-        )
+    def _search_ids(
+        self, query: str, *, limit: int, include_spam_trash: bool = False
+    ) -> list[str]:
         message_ids: list[str] = []
         page_token: str | None = None
-        while len(message_ids) < MAX_MESSAGES_PER_RUN:
-            parameters = {"q": query, "maxResults": 100}
+        while len(message_ids) < limit:
+            parameters: dict[str, object] = {"q": query, "maxResults": 100}
+            if include_spam_trash:
+                parameters["includeSpamTrash"] = "true"
             if page_token:
                 parameters["pageToken"] = page_token
             result = self._request_json(
@@ -264,13 +341,33 @@ class GmailGateway:
             for item in messages:
                 if isinstance(item, dict) and isinstance(item.get("id"), str):
                     message_ids.append(item["id"])
-                    if len(message_ids) >= MAX_MESSAGES_PER_RUN:
+                    if len(message_ids) >= limit:
                         break
             next_token = result.get("nextPageToken")
             page_token = next_token if isinstance(next_token, str) else None
             if not page_token:
                 break
+        return message_ids
 
+    def count_quarantined(
+        self, intake_address: str, sender_allowlist: Collection[str] | None = None
+    ) -> int:
+        """Count intake mail Gmail filed in Spam or Trash, for reporting only."""
+        return len(
+            self._search_ids(
+                quarantined_search_query(intake_address, sender_allowlist),
+                limit=MAX_QUARANTINED_PER_RUN,
+                include_spam_trash=True,
+            )
+        )
+
+    def list_messages(
+        self, intake_address: str, sender_allowlist: Collection[str] | None = None
+    ) -> list[InboxMessage]:
+        message_ids = self._search_ids(
+            intake_search_query(intake_address, sender_allowlist),
+            limit=MAX_MESSAGES_PER_RUN,
+        )
         output: list[InboxMessage] = []
         for message_id in message_ids:
             safe_id = quote(message_id, safe="")
@@ -334,6 +431,21 @@ def _attachment_calendars(
             return [extraction.calendar], len(extraction.rejected)
 
 
+def _count_quarantined(
+    mail_gateway: MailGateway,
+    intake_address: str,
+    sender_allowlist: Collection[str] | None,
+) -> int:
+    """Report intake mail Gmail filed away, without ever blocking real work."""
+    counter = getattr(mail_gateway, "count_quarantined", None)
+    if counter is None:
+        return 0
+    try:
+        return counter(intake_address, sender_allowlist)
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return 0
+
+
 def process_inbox(
     mail_gateway: MailGateway,
     calendar_gateway: CalendarGateway,
@@ -347,12 +459,17 @@ def process_inbox(
     reminder_minutes: int,
     extractor: EventExtractor | None = None,
 ) -> dict[str, int]:
-    messages = mail_gateway.list_messages(intake_address)
     trusted = {sender.strip().lower() for sender in trusted_senders if sender.strip()}
+    # None means "no sender restriction"; a set makes Gmail do the filtering.
+    sender_allowlist = None if allow_any_sender else trusted
+    messages = mail_gateway.list_messages(intake_address, sender_allowlist)
     totals = {
         "messages_seen": len(messages),
         "messages_processed": 0,
         "messages_needing_attention": 0,
+        "messages_in_spam_or_trash": _count_quarantined(
+            mail_gateway, intake_address, sender_allowlist
+        ),
         "events_created": 0,
         "events_updated": 0,
         "events_skipped": 0,

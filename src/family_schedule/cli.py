@@ -9,9 +9,15 @@ from pathlib import Path
 
 from .ai import HostedAIExtractor
 from .auth import authorize_google
-from .google_calendar import GoogleCalendarGateway, GoogleCredentials, sync_events
+from .google_calendar import (
+    GoogleCalendarGateway,
+    GoogleCredentials,
+    plan_sync,
+    summarize_plan,
+    sync_events,
+)
 from .ical import CalendarEvent, build_calendar, parse_events
-from .inbox import GmailGateway, process_inbox
+from .inbox import GmailGateway, intake_search_query, process_inbox
 from .sources import calendars_from_source
 
 
@@ -46,7 +52,15 @@ def _changed_source_paths(revision: str, inbox: Path) -> list[Path]:
         text=True,
     )
     if verified.returncode != 0:
-        return sorted(path.resolve() for path in _inbox_sources(inbox))
+        # Falling back to every source here would reconcile the whole calendar on an
+        # ordinary push and revert the family's manual edits, which is exactly what
+        # this flag exists to avoid. A shallow checkout is the usual cause: the
+        # workflow must fetch enough history for this revision to resolve.
+        raise RuntimeError(
+            f"Cannot resolve --changed-since revision {revision!r} in this checkout. "
+            "Fetch enough git history (fetch-depth: 0) and re-run; refusing to fall "
+            "back to a full reconciliation."
+        )
     changed = subprocess.run(
         [
             "git",
@@ -159,25 +173,36 @@ def _sync(args: argparse.Namespace) -> int:
         )
         return 0
     _merged, events = _calendar_for_paths(paths, settings)
+    gateway = GoogleCalendarGateway(
+        str(calendar_settings["id"]), GoogleCredentials.from_environment()
+    )
+    reminder_minutes = int(calendar_settings["reminder_minutes"])
     if args.dry_run:
+        # Report the decided plan, not just a record count, so a run that would
+        # add dozens of events says so before anyone approves it.
+        actions = plan_sync(events, gateway, reminder_minutes=reminder_minutes)
         print(
             json.dumps(
                 {
                     "sources": [path.name for path in paths],
                     "event_records": len(events),
                     "dry_run": True,
+                    **summarize_plan(actions),
+                    "would_create": [
+                        action.event.summary
+                        for action in actions
+                        if action.kind == "create"
+                    ][:20],
                 },
                 indent=2,
             )
         )
         return 0
-    gateway = GoogleCalendarGateway(
-        str(calendar_settings["id"]), GoogleCredentials.from_environment()
-    )
     result = sync_events(
         events,
         gateway,
-        reminder_minutes=int(calendar_settings["reminder_minutes"]),
+        reminder_minutes=reminder_minutes,
+        max_new_events=args.max_new,
     )
     print(
         json.dumps(
@@ -213,20 +238,36 @@ def _process_inbox(args: argparse.Namespace) -> int:
     senders = intake_settings.get("trusted_senders", [])
     if not isinstance(senders, list):
         raise TypeError("intake.trusted_senders must be a list")
+    allow_any_sender = bool(intake_settings.get("allow_any_sender", False))
+    trusted = {str(sender) for sender in senders}
+    sender_allowlist = None if allow_any_sender else trusted
     credentials = GoogleCredentials.from_environment()
+    extractor = HostedAIExtractor.from_environment()
     result = process_inbox(
         GmailGateway(credentials),
         GoogleCalendarGateway(str(calendar_settings["id"]), credentials),
         intake_address=address,
-        trusted_senders={str(sender) for sender in senders},
-        allow_any_sender=bool(intake_settings.get("allow_any_sender", False)),
+        trusted_senders=trusted,
+        allow_any_sender=allow_any_sender,
         allowed_ical_hosts=set(provider_settings["allowed_ical_hosts"]),
         calendar_name=str(calendar_settings.get("name", "Family Calendar")),
         default_timezone=str(calendar_settings.get("timezone", "UTC")),
         reminder_minutes=int(calendar_settings["reminder_minutes"]),
-        extractor=HostedAIExtractor.from_environment(),
+        extractor=extractor,
     )
-    print(json.dumps(result, indent=2))
+    # A run that sees nothing is the hardest failure to diagnose from a log, so
+    # always report which mailbox query ran and whether autopilot was available.
+    print(
+        json.dumps(
+            {
+                "intake_address": address,
+                "search_query": intake_search_query(address, sender_allowlist),
+                "ai_autopilot": "enabled" if extractor else "disabled",
+                **result,
+            },
+            indent=2,
+        )
+    )
     return 0
 
 
@@ -257,6 +298,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Only sync inbox files added or modified after this Git revision",
     )
     sync.add_argument("--dry-run", action="store_true")
+    sync.add_argument(
+        "--max-new",
+        type=int,
+        default=None,
+        help="Refuse the run if it would add more than this many new events",
+    )
     sync.set_defaults(handler=_sync)
 
     authorize = commands.add_parser(
