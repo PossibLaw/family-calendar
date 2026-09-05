@@ -34,12 +34,21 @@ family connects its own Google account.
 ### 1. Tell your coding agent: “Add this schedule”
 
 This is the simplest default. Give Codex, Claude, Gemini, or another coding agent the
-private repository and attach or paste the schedule. The repository's `AGENTS.md`
-tells it how to create stable events, remove booking secrets, run the checks, and
-finish the sync. Your request to add the batch is the approval; nobody reviews dozens
-of individual calendar entries.
+private repository and attach or paste the schedule. A screenshot, a PDF, a photo of a
+letter from school, a forwarded confirmation, or a typed sentence such as "I'm on UA
+123 to San Francisco on October 12" all work; the agent reads the source itself, so
+this path needs no AI API key. The repository's `AGENTS.md` tells it what to put in
+each event, how to keep time zones right across a travel leg, which booking secrets to
+strip, what to ask about rather than guess, and how to run the checks and finish the
+sync to `main`. Your request to add the batch is the approval; nobody reviews dozens of
+individual calendar entries.
 
 Use this prompt:
+
+This is the same approach used to set up the first household on this template: a
+coding agent created a reviewed iCalendar file, then imported it through an already
+signed-in Google Calendar browser session. No Google credentials were placed in the
+repository.
 
 > Read `AGENTS.md`, then add the attached schedule to my family calendar. Treat this
 > request as approval for the whole batch. Preserve recurrences and local time zones,
@@ -61,6 +70,13 @@ or supported registration PDF to a Gmail plus alias such as
 `yourname+calendar@gmail.com`. Gmail delivers it to `yourname@gmail.com`; no second
 mailbox is required.
 
+You can instead use the plain account address, with `allow_any_sender = false` and
+your household's addresses listed in `intake.trusted_senders`. Nobody has to remember
+a plus alias, and the sender list does the filtering the alias would otherwise do.
+Gmail applies that list server side, so mail from anyone else is never downloaded or
+labelled. The automation remains disabled until its Google authorization and GitHub
+settings are completed.
+
 The private repository checks that inbox every hour and can also be run immediately
 from GitHub's **Actions** tab. Valid events are added automatically. Successfully
 handled messages receive the `Family Calendar Processed` Gmail label. Messages with
@@ -76,6 +92,14 @@ inbox processor then extracts valid events and adds them automatically.
 
 A ChatGPT, Claude, or Gemini subscription is separate from API access. Autopilot is
 optional; the coding-agent path above continues to work without an API key.
+
+Autopilot only adds an event that falls into one of six categories: `travel`,
+`lodging`, `school`, `activity`, `appointment`, and `invite`. The model is asked to
+label every event it extracts, and the processor discards any event whose label is
+missing or outside that list, so a dated marketing email, a shipping notice, or a
+billing reminder cannot reach the calendar even if the model proposes it. Messages
+that produce no allowed event are labelled `Family Calendar Needs Attention` rather
+than processed silently.
 
 ## Start here: automatic setup for a family
 
@@ -241,11 +265,14 @@ reconciles every repository source when you need a full repair.
 
 Complete the automatic calendar setup above first, then:
 
-1. Choose a plus alias for the Gmail account you authorized, such as
-   `yourname+calendar@gmail.com`.
-2. Edit `schedule.toml`. Set `intake.address` to that alias. For a closed list, add
-   exact sender addresses to `trusted_senders`. To accept anyone who knows the alias,
-   set `allow_any_sender = true`.
+1. Decide how mail reaches the calendar. Either use the plain account address with a
+   closed sender list, or a plus alias such as `yourname+calendar@gmail.com` that
+   anyone who knows it may write to.
+2. Edit `schedule.toml`. Set `intake.address` accordingly. For a closed list, add
+   exact sender addresses to `trusted_senders` and leave `allow_any_sender = false`;
+   the list is then required and an empty one is rejected. Set
+   `allow_any_sender = true` only with a plus alias — combining it with the plain
+   account address would offer the whole mailbox to the calendar.
 3. Enable **Gmail API** in the same Google Cloud project.
 4. Run the authorization command again with Gmail enabled:
 
@@ -352,6 +379,47 @@ Repeat Step 5.
 
 For **Process family calendar inbox**, also confirm that `ENABLE_EMAIL_INTAKE` is
 exactly `true`.
+
+### The inbox workflow succeeds but always reports `messages_seen: 0`
+
+The run succeeded, so the Google credentials work; Gmail simply matched no mail.
+Each run prints the exact `search_query` it used. Paste that query into the Gmail
+search box while signed in as the intake account and compare:
+
+- **Gmail also finds nothing.** No mail has reached the alias. Confirm the family is
+  sending to the full alias from `intake.address`, not the bare account address.
+- **Gmail finds the mail but the run does not.** The messages already carry the
+  `Family Calendar Processed` or `Family Calendar Needs Attention` label; the run
+  deliberately skips them. Remove the label to reprocess a message.
+- **`messages_in_spam_or_trash` is above zero.** Gmail filed the mail in Spam or
+  Trash, and the processor never reads from there on purpose. Create a Gmail filter
+  for the intake alias with **Never send it to Spam**, then move the affected
+  messages back to the inbox.
+
+### Emails arrive but land in `Family Calendar Needs Attention`
+
+Without an AI key the processor only understands `.ics` attachments and PDFs that
+contain an approved Park District feed URL. Every ordinary email body is labelled for
+review instead. Each run prints `"ai_autopilot": "disabled"` when this is the case;
+set `AI_PROVIDER`, `AI_MODEL`, and the `AI_API_KEY` secret to interpret ordinary mail.
+
+With autopilot enabled, this label also means the message produced no event in an
+allowed category — the expected outcome for a newsletter, receipt, or delivery
+notice. Forward the message again as an `.ics` attachment if it really is a schedule
+the category list does not cover.
+
+### “Refusing to add N new events in one run”
+
+A full reconciliation found events it does not recognise and stopped rather than
+duplicating them. This normally means those events were imported by hand through
+Google Calendar's **Import & export** screen, which does not preserve the identifier
+the sync matches on.
+
+Ordinary syncs now adopt such an event instead of adding a second copy: an identical
+unmanaged event at the same time is claimed and tagged, and every later run
+recognises it. The limit exists for the case adoption cannot resolve — several
+identical events, or titles that no longer match the source. Look at the calendar
+first; raise `--max-new` only once you know the additions are genuinely new.
 
 ### “Missing Google OAuth environment variables”
 

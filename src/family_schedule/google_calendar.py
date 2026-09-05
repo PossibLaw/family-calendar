@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Protocol
 from urllib.error import HTTPError
@@ -16,9 +17,57 @@ from .ical import CalendarEvent, to_google_event
 class CalendarGateway(Protocol):
     def find_by_ical_uid(self, uid: str) -> list[dict[str, object]]: ...
 
+    def find_adoptable(self, event: CalendarEvent) -> list[dict[str, object]]: ...
+
     def import_event(self, payload: dict[str, object]) -> None: ...
 
     def patch_event(self, event_id: str, payload: dict[str, object]) -> None: ...
+
+
+def _window(moment: str, days: int) -> str:
+    """Bracket a start time by a day so a timed or all-day event is covered."""
+    text = moment if "T" in moment else f"{moment}T00:00:00Z"
+    parsed = datetime.fromisoformat(text)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return (parsed.astimezone(UTC) + timedelta(days=days)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+
+
+def _starts_at(candidate: object, start: dict[str, object]) -> bool:
+    if not isinstance(candidate, dict):
+        return False
+    other = candidate.get("start")
+    if not isinstance(other, dict):
+        return False
+    wanted = start.get("dateTime") or start.get("date")
+    found = other.get("dateTime") or other.get("date")
+    if not isinstance(wanted, str) or not isinstance(found, str):
+        return False
+    if "T" not in wanted or "T" not in found:
+        return wanted == found
+    return datetime.fromisoformat(wanted) == datetime.fromisoformat(found)
+
+
+def _describe_match(event: dict[str, object]) -> str:
+    """Name one conflicting event well enough to find it in Google Calendar."""
+    identifier = event.get("id")
+    summary = event.get("summary")
+    start = event.get("start")
+    when = ""
+    if isinstance(start, dict):
+        when = str(start.get("dateTime") or start.get("date") or "")
+    properties = event.get("extendedProperties")
+    private = properties.get("private", {}) if isinstance(properties, dict) else {}
+    managed = (
+        isinstance(private, dict) and private.get("family_schedule_managed") == "true"
+    )
+    parts = [f"id={identifier!r}", f"summary={summary!r}"]
+    if when:
+        parts.append(f"start={when}")
+    parts.append(f"managed_by_this_repo={'yes' if managed else 'no'}")
+    return " ".join(parts)
 
 
 def _fingerprint(payload: dict[str, object]) -> str:
@@ -31,13 +80,109 @@ def _fingerprint(payload: dict[str, object]) -> str:
 def _managed_payload(event: CalendarEvent, reminder_minutes: int) -> dict[str, object]:
     payload = to_google_event(event, reminder_minutes=reminder_minutes)
     fingerprint = _fingerprint(payload)
+    # iCalUID cannot be changed after an event exists, so an adopted event can
+    # never be found by UID. Record the source UID as a private property too, and
+    # match on either, so adoption survives every later run.
     payload["extendedProperties"] = {
         "private": {
             "family_schedule_hash": fingerprint,
             "family_schedule_managed": "true",
+            "family_schedule_uid": event.uid,
         }
     }
     return payload
+
+
+def _private_properties(event: dict[str, object]) -> dict[str, object]:
+    properties = event.get("extendedProperties")
+    if not isinstance(properties, dict):
+        return {}
+    private = properties.get("private")
+    return private if isinstance(private, dict) else {}
+
+
+def is_managed(event: dict[str, object]) -> bool:
+    return _private_properties(event).get("family_schedule_managed") == "true"
+
+
+@dataclass(frozen=True)
+class SyncAction:
+    """One decided change, resolved before anything is written."""
+
+    kind: str  # "create", "adopt", "update" or "skip"
+    event: CalendarEvent
+    payload: dict[str, object]
+    event_id: str | None = None
+    existing_summary: str | None = None
+
+
+def _resolve(
+    event: CalendarEvent, payload: dict[str, object], gateway: CalendarGateway
+) -> SyncAction:
+    matches = gateway.find_by_ical_uid(event.uid)
+    if len(matches) > 1:
+        listed = "; ".join(_describe_match(match) for match in matches)
+        raise RuntimeError(
+            f"Found {len(matches)} Google Calendar events with iCalUID "
+            f"{event.uid!r}; delete the extra one before syncing. "
+            f"Conflicting events: {listed}"
+        )
+
+    if not matches:
+        # Google's own Import screen does not preserve iCalUID, so a hand-imported
+        # event is invisible to the lookup above and would be recreated as a
+        # duplicate. Adopt an identical unmanaged event instead of adding a second.
+        adoptable = gateway.find_adoptable(event)
+        if len(adoptable) == 1:
+            existing = adoptable[0]
+            event_id = existing.get("id")
+            if isinstance(event_id, str) and event_id:
+                return SyncAction(
+                    "adopt",
+                    event,
+                    payload,
+                    event_id,
+                    str(existing.get("summary", "")),
+                )
+        return SyncAction("create", event, payload)
+
+    existing = matches[0]
+    desired_hash = payload["extendedProperties"]["private"]["family_schedule_hash"]  # type: ignore[index]
+    if _private_properties(existing).get("family_schedule_hash") == desired_hash:
+        return SyncAction("skip", event, payload)
+
+    event_id = existing.get("id")
+    if not isinstance(event_id, str) or not event_id:
+        raise RuntimeError(
+            f"Existing event {event.uid!r} has no Google Calendar event ID"
+        )
+    return SyncAction("update", event, payload, event_id)
+
+
+def plan_sync(
+    events: list[CalendarEvent],
+    gateway: CalendarGateway,
+    *,
+    reminder_minutes: int,
+) -> list[SyncAction]:
+    """Decide every change with reads only, before a single write happens."""
+    return [
+        _resolve(event, _managed_payload(event, reminder_minutes), gateway)
+        for event in events
+    ]
+
+
+def summarize_plan(actions: list[SyncAction]) -> dict[str, int]:
+    counts = {"created": 0, "adopted": 0, "updated": 0, "skipped": 0}
+    names = {
+        "create": "created",
+        "adopt": "adopted",
+        "update": "updated",
+        "skip": "skipped",
+    }
+    for action in actions:
+        counts[names[action.kind]] += 1
+    return counts
 
 
 def sync_events(
@@ -45,46 +190,28 @@ def sync_events(
     gateway: CalendarGateway,
     *,
     reminder_minutes: int,
+    max_new_events: int | None = None,
 ) -> dict[str, int]:
-    results = {"created": 0, "updated": 0, "skipped": 0}
-    for event in events:
-        payload = _managed_payload(event, reminder_minutes)
-        matches = gateway.find_by_ical_uid(event.uid)
-        if len(matches) > 1:
-            raise RuntimeError(
-                f"Found {len(matches)} Google Calendar events with iCalUID {event.uid!r}; "
-                "resolve the duplicate before syncing"
-            )
-        if not matches:
-            gateway.import_event(payload)
-            results["created"] += 1
-            continue
-
-        existing = matches[0]
-        private = (
-            existing.get("extendedProperties", {})
-            if isinstance(existing.get("extendedProperties"), dict)
-            else {}
+    actions = plan_sync(events, gateway, reminder_minutes=reminder_minutes)
+    creations = [action for action in actions if action.kind == "create"]
+    if max_new_events is not None and len(creations) > max_new_events:
+        sample = ", ".join(f"{action.event.summary!r}" for action in creations[:5])
+        raise RuntimeError(
+            f"Refusing to add {len(creations)} new events in one run; the limit is "
+            f"{max_new_events}. This usually means the calendar already holds these "
+            "events under identities this repository does not recognise, and syncing "
+            "would duplicate them. Review the calendar, then re-run with a higher "
+            f"--max-new to proceed. First few: {sample}"
         )
-        private_values = private.get("private", {}) if isinstance(private, dict) else {}
-        desired_hash = payload["extendedProperties"]["private"]["family_schedule_hash"]  # type: ignore[index]
-        if (
-            isinstance(private_values, dict)
-            and private_values.get("family_schedule_hash") == desired_hash
-        ):
-            results["skipped"] += 1
-            continue
 
-        event_id = existing.get("id")
-        if not isinstance(event_id, str) or not event_id:
-            raise RuntimeError(
-                f"Existing event {event.uid!r} has no Google Calendar event ID"
-            )
-        patch = dict(payload)
-        patch.pop("iCalUID", None)
-        gateway.patch_event(event_id, patch)
-        results["updated"] += 1
-    return results
+    for action in actions:
+        if action.kind == "create":
+            gateway.import_event(action.payload)
+        elif action.kind in {"adopt", "update"}:
+            patch = dict(action.payload)
+            patch.pop("iCalUID", None)
+            gateway.patch_event(str(action.event_id), patch)
+    return summarize_plan(actions)
 
 
 @dataclass(frozen=True)
@@ -177,8 +304,8 @@ class GoogleCalendarGateway:
         calendar_id = quote(self.calendar_id, safe="")
         return f"https://www.googleapis.com/calendar/v3/calendars/{calendar_id}/events"
 
-    def find_by_ical_uid(self, uid: str) -> list[dict[str, object]]:
-        query = urlencode({"iCalUID": uid, "showDeleted": "false", "maxResults": 10})
+    def _list(self, parameters: dict[str, object]) -> list[dict[str, object]]:
+        query = urlencode({"showDeleted": "false", "maxResults": 10, **parameters})
         result = self._request_json("GET", f"{self._events_url}?{query}")
         items = result.get("items", [])
         if not isinstance(items, list):
@@ -186,6 +313,55 @@ class GoogleCalendarGateway:
                 "Google Calendar API returned an invalid events list"
             )
         return [item for item in items if isinstance(item, dict)]
+
+    def find_adoptable(self, event: CalendarEvent) -> list[dict[str, object]]:
+        """Find one unmanaged event this source clearly already describes.
+
+        Only an exact match on summary and start counts, and only when nothing
+        else in the window looks the same, so adoption can never silently attach
+        this source to the wrong event.
+        """
+        google_event = to_google_event(event, reminder_minutes=0)
+        start = google_event.get("start")
+        if not isinstance(start, dict):
+            return []
+        moment = start.get("dateTime") or start.get("date")
+        if not isinstance(moment, str) or not moment:
+            return []
+        candidates = self._list(
+            {
+                "q": event.summary,
+                "timeMin": _window(moment, -1),
+                "timeMax": _window(moment, 1),
+                "singleEvents": "true",
+            }
+        )
+        matches = [
+            candidate
+            for candidate in candidates
+            if candidate.get("summary") == event.summary
+            and _starts_at(candidate, start)
+            and not is_managed(candidate)
+            and not candidate.get("recurringEventId")
+        ]
+        # Ambiguity is not adoptable: two identical unmanaged events mean a real
+        # duplicate that a person has to resolve.
+        return matches if len(matches) == 1 else []
+
+    def find_by_ical_uid(self, uid: str) -> list[dict[str, object]]:
+        items = self._list({"iCalUID": uid})
+        if not items:
+            # An adopted event keeps the iCalUID it was created with, so it is
+            # only findable by the identifier this repository wrote onto it.
+            items = self._list(
+                {"privateExtendedProperty": f"family_schedule_uid={uid}"}
+            )
+        # Editing a single occurrence of a recurring series makes Google store that
+        # occurrence as its own event carrying the series iCalUID and a
+        # recurringEventId. It is an instance of the event already managed here, not
+        # a second event, so counting it as a duplicate would let one manual edit
+        # block every future sync.
+        return [item for item in items if not item.get("recurringEventId")]
 
     def import_event(self, payload: dict[str, object]) -> None:
         self._request_json("POST", f"{self._events_url}/import", payload)

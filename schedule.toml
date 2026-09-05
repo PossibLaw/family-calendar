@@ -1,13 +1,25 @@
 [calendar]
+# The calendar this repository writes to. "primary" is the main calendar of
+# whichever Google account you authorize; you can also name a calendar by its
+# address. Events carry a reminder this many minutes ahead.
 id = "primary"
 name = "Family Calendar"
 timezone = "America/Chicago"
 reminder_minutes = 30
 
 [intake]
-address = ""
-trusted_senders = []
+# The mailbox the family forwards schedules to. Mail is matched on the
+# Delivered-To, To, Cc and Bcc headers, so a forwarded confirmation is found
+# even though it was never addressed to this mailbox directly.
+address = "you@example.com"
+
+# The trust boundary. Gmail applies this list server side, so mail from anyone
+# else is never downloaded, read or labelled. List the addresses your household
+# actually sends from. An empty list with allow_any_sender = false is refused
+# rather than quietly matching every sender.
+trusted_senders = ["you@example.com"]
 allow_any_sender = false
 
 [providers]
+# Registration PDFs are only followed to hosts named here.
 allowed_ical_hosts = ["anprod.active.com"]
